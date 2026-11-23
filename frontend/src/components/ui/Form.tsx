@@ -1,19 +1,36 @@
-import { forwardRef, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
+import {
+  cloneElement, forwardRef, isValidElement, useId, type InputHTMLAttributes, type ReactElement, type ReactNode, type SelectHTMLAttributes,
+  type TextareaHTMLAttributes,
+} from "react";
 import { Search, X } from "lucide-react";
 import clsx from "clsx";
 
+/** Label + control + hint/error. The label is linked to the control (htmlFor/id) and the
+ *  hint/error is linked via aria-describedby, so screen readers announce them. */
 export function Field({ label, error, hint, required, children, className }: {
   label?: string; error?: string; hint?: string; required?: boolean; children: ReactNode; className?: string;
 }) {
+  const auto = useId();
+  const child = isValidElement<{ id?: string }>(children) ? children : null;
+  const id = child?.props.id ?? `f${auto.replace(/:/g, "")}`;
+  const msgId = `${id}-msg`;
+  const control = child
+    ? cloneElement(child as ReactElement<Record<string, unknown>>, {
+        id,
+        "aria-invalid": error ? true : undefined,
+        "aria-describedby": error || hint ? msgId : undefined,
+        "aria-required": required || undefined,
+      })
+    : children;
   return (
     <div className={className}>
       {label && (
-        <label className="label">
-          {label} {required && <span className="text-bad-600">*</span>}
+        <label className="label" htmlFor={child ? id : undefined}>
+          {label} {required && <span className="text-bad-600" aria-hidden="true">*</span>}
         </label>
       )}
-      {children}
-      {error ? <p className="mt-1 text-xs text-bad-600">{error}</p> : hint ? <p className="mt-1 text-xs text-ink-muted">{hint}</p> : null}
+      {control}
+      {error ? <p id={msgId} className="mt-1 text-xs text-bad-600">{error}</p> : hint ? <p id={msgId} className="mt-1 text-xs text-ink-muted">{hint}</p> : null}
     </div>
   );
 }

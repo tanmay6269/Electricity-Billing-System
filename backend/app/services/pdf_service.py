@@ -5,7 +5,7 @@ import io
 from datetime import datetime
 
 from reportlab.graphics.barcode.qr import QrCodeWidget
-from reportlab.graphics.shapes import Drawing
+from reportlab.graphics.shapes import Drawing, Polygon, Rect
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4, landscape
@@ -25,11 +25,19 @@ STATUS_COLORS = {
 }
 
 styles = getSampleStyleSheet()
-S_TITLE = ParagraphStyle("t", parent=styles["Title"], fontSize=18, textColor=NAVY, alignment=0, spaceAfter=2)
+S_TITLE = ParagraphStyle("t", parent=styles["Title"], fontSize=18, leading=22, textColor=NAVY, alignment=0, spaceAfter=2)
 S_H = ParagraphStyle("h", parent=styles["Heading4"], textColor=NAVY, spaceBefore=6, spaceAfter=4)
 S_N = ParagraphStyle("n", parent=styles["Normal"], fontSize=9, leading=12)
 S_SMALL = ParagraphStyle("s", parent=S_N, fontSize=8, textColor=MUTED)
 S_RIGHT = ParagraphStyle("r", parent=S_N, alignment=TA_RIGHT)
+S_SMALL_R = ParagraphStyle("sr", parent=S_SMALL, alignment=TA_RIGHT)
+
+
+def period_label(p: str) -> str:
+    try:
+        return datetime.strptime(p, "%Y-%m").strftime("%b %Y")
+    except (TypeError, ValueError):
+        return p or "-"
 
 
 def rs(v) -> str:
@@ -41,17 +49,27 @@ def _status_label(status: str) -> str:
     return f'<font color="{color}"><b>{status.replace("_", " ").upper()}</b></font>'
 
 
+def _logo(size=11 * mm) -> Drawing:
+    """Navy rounded square with a sky-blue lightning bolt (drawn, so no font glyph is needed)."""
+    d = Drawing(size, size)
+    d.add(Rect(0, 0, size, size, rx=2.2 * mm, ry=2.2 * mm, fillColor=NAVY, strokeColor=None))
+    u = size / 32.0
+    pts = [18, 28, 8, 14, 15, 14, 13, 4, 24, 19, 17, 19, 18, 28]  # bolt outline in a 32x32 box (y up)
+    d.add(Polygon([v * u for v in pts], fillColor=colors.HexColor("#38BDF8"), strokeColor=None))
+    return d
+
+
 def _header(company: dict, doc_title: str, ref: str) -> Table:
-    left = [
-        Paragraph(f'<font color="#2563EB">&#9889;</font> {company["name"]}', S_TITLE),
+    name = [
+        Paragraph(company["name"], S_TITLE),
         Paragraph(company["address"], S_SMALL),
         Paragraph(f'Care: {company["phone"]} &nbsp;|&nbsp; {company["email"]}', S_SMALL),
     ]
-    right = [Paragraph(f"<b>{doc_title}</b>", ParagraphStyle("dt", parent=S_RIGHT, fontSize=14, textColor=NAVY)),
-             Paragraph(ref, S_RIGHT)]
-    t = Table([[left, right]], colWidths=[120 * mm, 60 * mm])
+    right = [Paragraph(f"<b>{doc_title}</b>", ParagraphStyle("dt", parent=S_RIGHT, fontSize=14, leading=18, textColor=NAVY)),
+             Spacer(1, 2), Paragraph(ref, S_RIGHT)]
+    t = Table([[_logo(), name, right]], colWidths=[14 * mm, 108 * mm, 58 * mm])
     t.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("LINEBELOW", (0, 0), (-1, 0), 1.5, NAVY),
-                           ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
+                           ("LEFTPADDING", (0, 0), (0, 0), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 8)]))
     return t
 
 
@@ -92,7 +110,7 @@ def invoice_pdf(bill, company: dict) -> bytes:
     ])
     acct = _kv_table([
         ("Connection ID", conn.connection_code), ("Meter No.", conn.meter.meter_number),
-        ("Billing Period", bill.billing_period), ("Issue Date", bill.issue_date.strftime("%d %b %Y")),
+        ("Billing Period", period_label(bill.billing_period)), ("Issue Date", bill.issue_date.strftime("%d %b %Y")),
         ("Due Date", f"<b>{bill.due_date.strftime('%d %b %Y')}</b>"), ("Status", _status_label(bill.status)),
     ])
     t = Table([[_box(cust, 88 * mm), _box(acct, 88 * mm)]], colWidths=[91 * mm, 91 * mm])
@@ -114,10 +132,11 @@ def invoice_pdf(bill, company: dict) -> bytes:
                      f"{float(it.units):,.2f}" if it.units is not None and it.item_type in ("slab", "flat") else "",
                      f"{float(it.rate):,.2f}" if it.rate is not None and it.item_type in ("slab", "flat") else "",
                      rs(it.amount)])
-    rows.append(["", "", Paragraph("<b>Total Payable</b>", S_N), Paragraph(f"<b>{rs(bill.total_amount)}</b>", S_N)])
-    rows.append(["", "", "Amount Paid", rs(bill.amount_paid)])
-    rows.append(["", "", Paragraph("<b>Balance Due</b>", S_N),
-                 Paragraph(f'<font color="#DC2626"><b>{rs(bill.balance_due)}</b></font>', S_N)])
+    balance = 0 if bill.carried_forward_to_id else bill.balance_due
+    rows.append(["", "", Paragraph("<b>Total Payable</b>", S_RIGHT), Paragraph(f"<b>{rs(bill.total_amount)}</b>", S_RIGHT)])
+    rows.append(["", "", Paragraph("Amount Paid", S_RIGHT), Paragraph(rs(bill.amount_paid), S_RIGHT)])
+    rows.append(["", "", Paragraph("<b>Balance Due</b>", S_RIGHT),
+                 Paragraph(f'<font color="#DC2626"><b>{rs(balance)}</b></font>', S_RIGHT)])
     ch = Table(rows, colWidths=[100 * mm, 22 * mm, 25 * mm, 35 * mm])
     st = _grid_style()
     st.add("ALIGN", (1, 1), (-1, -1), "RIGHT")
@@ -146,7 +165,7 @@ def receipt_pdf(payment, company: dict) -> bytes:
     els = [_header(company, "PAYMENT RECEIPT", f"Receipt No: <b>{payment.receipt_number or '-'}</b>"), Spacer(1, 10)]
     rows = [
         ("Customer", f"<b>{c.full_name}</b> ({c.customer_code})"),
-        ("Invoice Number", bill.invoice_number), ("Billing Period", bill.billing_period),
+        ("Invoice Number", bill.invoice_number), ("Billing Period", period_label(bill.billing_period)),
         ("Transaction ID", payment.transaction_id), ("Payment ID", payment.payment_code),
         ("Payment Date", payment.payment_date.strftime("%d %b %Y %H:%M")),
         ("Payment Method", payment.method.replace("_", " ").title()),
@@ -186,19 +205,31 @@ def table_report_pdf(title: str, columns: list[dict], rows: list[dict], company:
         els.append(Spacer(1, 6))
     data = [[Paragraph(f'<font color="white"><b>{c["label"]}</b></font>', S_SMALL) for c in columns]]
     for r in rows:
-        data.append([Paragraph(_fmt(r.get(c["key"]), c.get("type")), S_SMALL) for c in columns])
+        data.append([Paragraph(_fmt(r.get(c["key"]), c.get("type")), S_SMALL_R if c.get("type") == "money" else S_SMALL) for c in columns])
     if len(data) == 1:
         data.append([Paragraph("No records for the selected filters.", S_SMALL)] + [""] * (len(columns) - 1))
-    t = Table(data, colWidths=[usable / len(columns)] * len(columns), repeatRows=1)
+    t = Table(data, colWidths=_col_widths(columns, rows, usable), repeatRows=1)
     t.setStyle(_grid_style())
     els.append(t)
     doc.build(els)
     return buf.getvalue()
 
 
+def _col_widths(columns: list[dict], rows: list[dict], usable: float) -> list[float]:
+    """Width proportional to the longest text in each column (header or first 50 rows), with a floor."""
+    weights = []
+    for c in columns:
+        longest = max([len(c["label"])] + [len(_fmt(r.get(c["key"]), c.get("type"))) for r in rows[:50]])
+        weights.append(max(10, min(longest, 40)) + 3)  # +3 ~ cell padding
+    total = sum(weights)
+    return [usable * w / total for w in weights]
+
+
 def _fmt(v, typ=None) -> str:
     if v is None:
         return "-"
+    if isinstance(v, str) and v in STATUS_COLORS:
+        return v.replace("_", " ").title()
     if typ == "money":
         return rs(v)
     if isinstance(v, float):
