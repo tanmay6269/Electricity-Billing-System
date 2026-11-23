@@ -14,3 +14,6 @@ dist/
 # misc
 .DS_Store
 Thumbs.db
+
+# project overview PDF stays local
+docs/
