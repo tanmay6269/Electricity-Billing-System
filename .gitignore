@@ -1,0 +1,16 @@
+# secrets
+.env
+*.env.local
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+backend/logs/
+*.db
+# node
+node_modules/
+dist/
+# misc
+.DS_Store
+Thumbs.db
